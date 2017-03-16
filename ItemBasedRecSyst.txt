@@ -1,0 +1,316 @@
+# ItemBasedRecommenderSystem
+
+# This code uses a dataset of books and a rating matrix to generate
+# recommendations given a test item
+
+# packages
+import pandas as pd
+import random 
+import numpy as np
+from scipy.sparse import csr_matrix
+import os
+from numpy import linalg as la
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+# directory
+os.chdir('C:\Users\csmit231\Desktop')
+
+# import and preprocess data
+def loadDataset(path=""):
+    """ To load the dataSet"
+    Parameter: The folder where the data files are stored
+    Return: the dictionary with the data
+    """
+    #Recover the titles of the books
+    books = {}
+    for line in open(path+"BX-Books.csv"):
+        line = line.replace('"', "")
+        (id,title) = line.split(";") [0:2]
+        books[id] = title
+
+    #Load the data
+    prefs = {}
+    count = 0
+    for line in open(path+"BX-Book-Ratings.csv"):
+        line = line.replace('"', "")
+        line = line.replace("\\","")
+        (user,bookid,rating) = line.split(";")
+        try:
+            if float(rating) > 0.0:
+                prefs.setdefault(user,{}) #setdefault sets the value of key to empty{} if no rating is found
+                prefs[user][books[bookid]] = float(rating)
+                #print books[bookid]
+        except ValueError:
+            count+=1
+            print "value error found! " + user + bookid + rating
+        except KeyError:
+            count +=1
+            print "key error found! " + user + " " + bookid
+    return prefs
+	
+	
+# view dictionary
+all_dict = loadDataset(path='C:\Users\csmit231\Desktop\\')
+
+# find unique books
+UniqueBooks = []
+for i in all_dict.keys():
+    for j in all_dict[i]:
+        if j not in UniqueBooks:
+            UniqueBooks.append(j)
+
+UniqueBooksArr = np.array(UniqueBooks)
+
+# make book array with corresponding index
+book_array = np.zeros(shape=(135394,2),dtype='a25')
+for book_idx,book_id in enumerate(UniqueBooksArr):
+    book_array[book_idx,0] = book_idx
+    book_array[book_idx,1] = book_id
+	
+	
+# make user array with corresponding index
+user_array = np.zeros(shape=(77805,2),dtype=int)
+for user_idx,user_id in enumerate(all_dict.keys()):
+    user_array[user_idx,0] = user_idx
+    user_array[user_idx,1] = user_id
+
+### UB_matrix was generated separately and loaded here as sparse matrix due to computational time
+### Initialize the big matrix
+UB_matrix = csr_matrix((77805,135394),dtype='>i4').toarray()
+
+
+### Generate ratings matrix
+
+
+for user_idx,user in enumerate(all_dict.keys()):
+    for book_idx,book in enumerate(UniqueBooks):
+        if book in all_dict[user].keys():
+            UB_matrix[user_idx,book_idx] = int(all_dict[user][book])
+        else:
+            pass
+
+### First five rows and first ten columns
+UB_matrix[0:5,0:10]
+
+
+### Save ratings matrix
+np.save('ratings_matrix.npz',UB_matrix)
+
+# Load the UB_matrix
+UB_matrix = np.load('ratings_matrix.npy')
+
+#### This was the process to sample the ratings matrix ####
+#### Load the saved training and testing files directly to save time ####
+
+### Take a random sample of rows
+N = 77805
+sample_idx = np.arange(77805)
+
+### Randomly shuffle the indexes
+np.random.shuffle(sample_idx)
+train_idx = sample_idx[:int(N*.2)]
+test_idx = sample_idx[int(N*0.2):int(N*0.4)]
+
+### Sort the sample indexes
+train_idx_sort = np.ndarray.sort(train_idx)
+test_idx_sort = np.ndarray.sort(test_idx)
+
+### Create Training/Testing Sets
+training_sample = UB_matrix[train_idx,:]
+testing_sample = UB_matrix[test_idx,:]
+
+
+### Save training and testing ratings matrix & indexes
+np.save('training_ratings',training_sample)
+np.save('testing_ratings',testing_sample)
+np.save('training_indexes',train_idx)
+np.save('testing_indexes',test_idx)
+
+### Load the training and testing
+training_sample = np.load('training_ratings.npy', mmap_mode='r')
+testing_sample = np.load('testing_ratings.npy', mmap_mode='r')
+train_idx = np.load('training_indexes.npy', mmap_mode='r')
+testing_idx = np.load('testing_indexes.npy', mmap_mode='r')
+
+##Define Similiarity Measures - Provided by a ML Textbook**
+# Euclidean Similarity Measure
+def EuclidSim(vecA,vecB):
+    return np.sqrt(sum(np.power(vecA-vecB,2)))
+	
+# Cosine Similarity Measure
+def CosineSim(vecA,vecB):
+    numerator = (vecA.T*vecB)
+    print numerator.shape
+    denominator = la.norm(vecA)*la.norm(vecB)
+    return 0.5+0.5*(numerator/denominator)
+
+# Pearson Similarity Measure
+def PearsonSim(vecA,vecB):
+    if len(vecA)<3 : return 1.0
+    return 0.5+0.5*np.corrcoef(vecA,vecB,rowvar=0)[0][1]
+
+# Make Prediction for Specific Item
+# Generate the predicted rating for a given user
+def standEst(dataMat, user_id, simMeas, book):
+    ####' @params dataMat: a sparse Numpy CSR Matrix (UB_matrix)
+    ####' @params user_id: the user id as a string from the master dictionary
+    ####' @params simMeas: the similarity measure:
+    ####'                  EuclidSim' for Euclidean,
+    ####'                  CosineSim' for Cosine Similarity,
+    ####'                  PearsonSim' for Pearson Correlation
+    ####' @params book: The name of the book as a string (must be spelled correctly)
+    ####' @params orig: a list of integers mapping to the book indices that the user rated
+    
+    # Convert dataMat to sparse np.array
+    dataMat = csr_matrix(dataMat,dtype='>i4').toarray()
+    
+    # Convert the string user_id into an interger
+    user_id2 =user_id # this is a string of the userID number
+    user_id = int(user_id) # this is the userID number converted to a number
+    book_name = book # this is the string name of the book
+    
+    # Find the corresponding index for that user in the UB_matrix
+    user_idx = str(int(user_array[[np.where(user_array==user_id),0]][0]))
+    
+    # Convert the book name to corresponding book index number in UB_matrix
+    book_str = book
+    book_str = book_str[:25]
+    book_idx = int(book_array[np.where(book_array==book_str),0][0][0])
+    
+    # Find number of items
+    n = np.shape(dataMat)[1]
+    
+    # Initialize variables to calculate predicted rating
+    simTotal = 0.0; ratSimTotal = 0.0
+    
+    # Loop through all items the user has rated and compare to other items
+    for j in range(n):
+        userRating = dataMat[user_idx,j]
+        if userRating == 0: continue
+        
+        # find items that have been rated by both users
+        overLap = np.nonzero(np.logical_and(dataMat[:,book_idx]>0, \
+                                      dataMat[:,j]>0))[0]
+        if len(overLap) == 0: similarity = 0
+        else: similarity = simMeas(dataMat[overLap,book_idx], \
+                                   dataMat[overLap,j])
+        #print 'the %s and %s similarity is: %.4f' % (book_name, fakeBook_array[[np.where(fakeBook_array==str(j)),1]][0][0], similarity)
+        simTotal += similarity
+        ratSimTotal += similarity * userRating
+    if simTotal == 0: return 0
+    else: return ratSimTotal/simTotal
+
+# test recommender
+standEst(dataMat, user_id, simMeas, book)
+
+# Generate the top 10 Recommendations
+def recommend(dataMat, user_id, N=10, simMeas=EuclidSim, estMethod=standEst):
+    ####' @params dataMat: a sparse Numpy CSR Matrix (training_matrix)
+    ####' @params user_id: the user id as a string from the master dictionary
+    ####' @params N: The number of recommendations requested, defaults to 10
+    ####' @params simMeas: the similarity measure:
+    ####'                  EuclidSim' for Euclidean,
+    ####'                  CosineSim' for Cosine Similarity,
+    ####'                  PearsonSim' for Pearson Correlation
+    ####' @params estMethod: the method used to make a predicted rating for the user, defaults to standEst
+    
+    # store the user ID as string and integer
+    user_id2=user_id
+    user_id=int(user_id)
+    
+    # Find the corresponding index for that user in the UB_matrix
+    user_idx = str(int(user_array[[np.where(user_array==user_id),0]][0]))
+    
+    # Convert ratings data to numpy matrix
+    dataMat = np.matrix(dataMat)
+    
+    # Collect original indices of rated items
+    #unrated_index=[]
+    #for col in range(int(dataMat.shape[1])):
+    #    if dataMat[0,col]==0:
+    #        unrated_index.append(col)
+    
+    # Create list of unrated items for the user
+    unratedBooks = np.nonzero(dataMat[user_idx,:].A==0)[1] #find unrated items 
+    if len(unratedBooks) == 0: return 'you rated everything'# exit if no unrated options
+    
+    # Initialize item scores for user
+    BookScores = []
+    
+    # Loop over the unrated items and 
+    for book_id in unratedBooks:
+        book = book_array[np.where(book_array==str(book_id)),1][0][0]
+        estimatedScore = estMethod(dataMat, user_id, simMeas, book)
+        BookScores.append((book_array[[np.where(book_array==str(book_id)),1]][0][0], estimatedScore))
+    return sorted(BookScores, key=lambda jj: jj[1], reverse=True)[:N]
+
+def cross_validate_user(dataMat, user_id, test_ratio, estMethod=standEst, simMeas=PearsonSim):
+    ####' @params dataMat: a sparse Numpy CSR Matrix (training_matrix)
+    ####' @params user_id: the user id as a string from the master dictionary
+    ####' @params test_ratio: the percentage to hold out as testing
+    ####' @params estMethod: the method used to make a predicted rating for the user, defaults to standEst
+    ####' @params simMeas: the similarity measure:
+    ####'                  EuclidSim' for Euclidean,
+    ####'                  CosineSim' for Cosine Similarity,
+    ####'                  PearsonSim' for Pearson Correlation
+    
+    # Store the original user ID numbers
+    user_id2 = user_id
+    user_id = int(user_id)
+    
+    # Find the corresponding index for that user in the UB_matrix
+    user_idx = str(int(user_array[[np.where(user_array==user_id),0]][0]))
+    
+    # Find the number of Books (columns)
+    number_of_items = np.shape(dataMat)[1]
+    
+    # Find the books the specific user rated
+    rated_items_by_user = np.array([i for i in range(number_of_items) if dataMat[user_idx,i]>0])
+    
+    # Create random testing set indices
+    test_size = test_ratio * len(rated_items_by_user)
+    test_indices = np.random.randint(0, len(rated_items_by_user), test_size)
+    
+    # Extract out the testing set from the books that the user has rated
+    withheld_items = rated_items_by_user[test_indices]
+    
+    # Create a copy of the complete original user profile
+    original_user_profile = np.copy(dataMat[user_idx])
+    
+    # Set the ratings of the testing set to zero so that they aren't used in the training calculation
+    dataMat[user_idx, withheld_items] = 0
+    
+    # initialize error and total count variables
+    error_u = 0.0
+    count_u = len(withheld_items)
+
+    # Compute absolute error for user u over all test items
+    for item in withheld_items: 
+    # Estimate rating on the withheld item
+        estimatedScore = estMethod(dataMat, user_id, simMeas, item)
+        error_u = error_u + abs(estimatedScore - original_user_profile[item])
+
+    # Now restore ratings of the withheld items to the user profile
+    for item in withheld_items:
+        dataMat[user_idx, item] = original_user_profile[item]
+
+    # Return sum of absolute errors and the count of test cases for this user
+    # Note that these will have to be accumulated for each user to compute MAE
+    return error_u, count_u
+
+def test(dataMat, test_ratio, estMethod):  
+    total_error = 0.0
+    total_count = 0.0
+    for i in range(len(dataMat)):
+        error, count = cross_validate_user(dataMat,i,test_ratio,estMethod,simMeas=PearsonSim)
+        total_error += error
+        total_count += count
+    MAE = float(total_error/total_count)        
+    print 'Mean Absoloute Error for ',estMethod,' : ', MAE
+
+# Evaluate Data
+recommend(training_sample, '142945', N=10, simMeas=PearsonSim, estMethod=standEst)
+test(dataMat, test_ratio, estMethod)
+
+	
